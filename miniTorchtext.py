@@ -79,7 +79,7 @@ class TextDataObject:
             text.append(self.vocab_dic_inv[word])
         return text
     
-    def convert_from_file(self, file:str, transform=None):
+    def convert_from_file(self, file:str, transform=None, maxlen=0):
         
         if transform is None:
             transform = self.transform
@@ -87,8 +87,11 @@ class TextDataObject:
         with open(file,"r") as fp:
             for textline in fp:
                 processed_data.append(self._converter(textline,transform))
-        
-        return TextDataObject.BatchObject(self, processed_data, self.maxlen)
+        if maxlen == 0:
+            for text,_ in processed_data:
+                maxlen = max(maxlen,len(text))
+                
+        return TextDataObject.BatchObject(self, processed_data, maxlen)
         
     def GetFixedLengthBatch(self,maxlen):
         
