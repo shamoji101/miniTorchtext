@@ -1,15 +1,17 @@
+from copy import deepcopy
 import random
 
 class TextDataObject:
     
-    def __init__(self, file:str, transform, min_word_num=None):
+    def __init__(self, file:str, transform, min_word_num=None,Batch_size=1):
         self.Myinstance = self
         self.file_name = file
-        self.vocab_dic={"<__UNK__>":0,"<__PAD__>":1}
+        self.vocab_dic={"<UNKNOWN>":0,"<PADDING>":1}
         self.vocab_dic_inv={}
-        self.vocab_freq={"<__UNK__>":0,"<__PAD__>":0}
+        self.vocab_freq={"<UNKNOWN>":0,"<PADDING>":0}
         self.transform = transform
         self.processed_data=[]
+        self.Batch_size=Batch_size
         
         with open(file,"r")as fp:
             for text in fp:
@@ -28,11 +30,15 @@ class TextDataObject:
         
         
         if min_word_num is not None:
-            self.vocab_freq = {key:value for key,value in self.vocab_freq.items() if key == "<__PAD__>" or key == "<__UNK__>" or value >= min_word_num}
+            self.vocab_freq = {key:value for key,value in self.vocab_freq.items() if key == "<PADDING>" or key == "<UNKNOWN>" or value >= min_word_num}
             self.vocab_dic_inv = {vocab_id:key for vocab_id,(key,value) in enumerate(self.vocab_freq.items())}
             self.vocab_dic = {v:k for k,v in self.vocab_dic_inv.items()}
         else:
             self.vocab_dic_inv = {v:k for k,v in self.vocab_dic.items()}
+        
+        self.max_vocab = max(self.vocab_dic_inv.keys())
+        
+        
         
         
     def __getitem__(self,key):
@@ -41,7 +47,7 @@ class TextDataObject:
         
         if type(key) is int:
             
-            return TextDataObject.BatchObject(self, [self.processed_data[key]], len(self.processed_data[key]))
+            return TextDataObject.BatchObject(self, [self.processed_data[key]], len(self.processed_data[key][0]))
     
         else:
             
@@ -49,6 +55,10 @@ class TextDataObject:
                 maxlen=max(maxlen,len(text))
 
             return TextDataObject.BatchObject(self, self.processed_data[key], maxlen)
+        
+    def __len__(self):
+        
+        return len(self.processed_data)
     
     def convert(self, text:str,transform=None):
         
@@ -119,6 +129,8 @@ class TextDataObject:
             self.fulldata = []
             self.processed_text_len_list = []
             self.batch_maxlen=0
+            self._IterIndexPoint = 0
+            self.batch_size = outer_instance.Batch_size
             for processed_text, label in processed_data:
                 textdata=self.convert_with_dic(processed_text,self.outer_instance.vocab_dic)
                 self.text.append(textdata)
@@ -130,12 +142,17 @@ class TextDataObject:
                 self.batch_maxlen = max(self.processed_text_len_list)
             else:
                 self.batch_maxlen = maxlen
+            self.do_shuffle=True
                 
         def __getitem__(self,key):
+            
+            #return self.outer_instance[key]
+            
             if type(key) is int:
                 return TextDataObject.BatchObject(self.outer_instance, [self.processed_data[key]], self.maxlen)
             else:
                 return TextDataObject.BatchObject(self.outer_instance, self.processed_data[key], self.maxlen)
+            
         
         def __add__(self,other):
             self.processed_data.extend(other.processed_data)
@@ -145,7 +162,27 @@ class TextDataObject:
         def __len__(self):
         
             return len(self.processed_data)
+        
+        def __iter__(self):
+            
+            return deepcopy(self)
+        
+        
+        def __next__(self):
+            
+            
+            try:
+                self[self._IterIndexPoint]
+                next_batch_object=self[self._IterIndexPoint:self._IterIndexPoint+self.batch_size]
+                if self.do_shuffle:
+                    next_batch_object=next_batch_object.shuffle()
+                self._IterIndexPoint+=self.batch_size
+                return next_batch_object.text, next_batch_object.label
 
+            except IndexError:
+                
+                raise StopIteration
+                
         def convert_with_dic(self,processed_text,vocab_dic):
             
             data=[]
@@ -153,20 +190,35 @@ class TextDataObject:
                 try:
                     data.append(vocab_dic[word])
                 except KeyError:
-                    data.append(vocab_dic["<__UNK__>"])
+                    data.append(vocab_dic["<UNKNOWN>"])
                 
 
             while len(data) < self.maxlen:
-                data.append(vocab_dic["<__PAD__>"])
+                data.append(vocab_dic["<PADDING>"])
 
             
             return data
         
         def split_validation(self,p=0.2):
             
-            shuffled_data=sorted(self.processed_data, key=lambda k: random.random())
-            split_point=int(len(shuffled_data)*0.2)
+            self.processed_data=sorted(self.processed_data, key=lambda k: random.random())
+            split_point=int(len(self.processed_data)*p)
             return_A=self[:split_point]
             return_B=self[split_point:]
-            return return_A,return_B
+            return return_B,return_A #ここは、大きい方をTrain,小さい方をTestとするため。
         
+        def BoW(self):
+            allBoWvec=[]
+            for wordlist in self.text:
+                BoWvec=[0]*(self.outer_instance.max_vocab+1)
+                for word in wordlist:
+                    BoWvec[word]+=1
+                allBoWvec.append(BoWvec)
+            return allBoWvec, self.label
+        
+        def shuffle(self):
+            
+            self.processed_data = sorted(self.processed_data, key=lambda k: random.random())
+            return self[:]
+        
+
